@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PHP2Shell (CVE-2026-109619) - Интерактивная схема Use-After-Free</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: #eef3f5;
+    color: #1c3546;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 12px 24px;
+    gap: 12px;
+  }
+  .wrap {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .stage {
+    width: 100%;
+    background: #f4f7f8;
+    border-radius: 16px;
+    box-shadow: 0 12px 34px rgba(28, 53, 70, 0.11);
+    overflow: hidden;
+  }
+  #svg-uaf {
+    width: 100%;
+    height: auto;
+    display: block;
+    user-select: none;
+  }
+  .panel {
+    background: #ffffff;
+    border: 1px solid #d2dde2;
+    border-radius: 12px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    box-shadow: 0 4px 14px rgba(28, 53, 70, 0.05);
+  }
+  .scrub-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .scrub-row input[type="range"] {
+    flex: 1;
+    accent-color: #2e7d78;
+    cursor: pointer;
+    height: 6px;
+  }
+  .time-lbl {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    color: #5c6f7b;
+    min-width: 84px;
+    text-align: right;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .grp {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  button {
+    appearance: none;
+    border: 1px solid #c3d2d9;
+    background: #f4f7f8;
+    color: #1c3546;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 6px 11px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  button:hover { background: #e3ecee; border-color: #8aa0ab; }
+  button.active-vuln {
+    background: #f9eae7;
+    border-color: #b8503c;
+    color: #b8503c;
+  }
+  button.active-patch {
+    background: #e1efef;
+    border-color: #2e7d78;
+    color: #1d5f5b;
+  }
+  button.step-btn { min-width: 29px; padding: 6px 8px; justify-content: center; }
+  button.step-btn.active {
+    background: #1c3546;
+    border-color: #1c3546;
+    color: #ffffff;
+  }
+  button.gif-btn {
+    background: #2e7d78;
+    border-color: #2e7d78;
+    color: #ffffff;
+  }
+  button.gif-btn:hover { background: #23635f; }
+  button:disabled { opacity: 0.65; cursor: wait; }
+  .keys {
+    font-size: 11.5px;
+    color: #6e808c;
+    text-align: center;
+  }
+  @media (max-width: 600px) {
+    body { padding: 10px 8px 18px; }
+    .panel { padding: 9px 10px; }
+    button { font-size: 12px; padding: 6px 9px; }
+    .keys { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="stage">
+    <svg id="svg-uaf" xmlns="http://www.w3.org/2000/svg" width="880" height="600" viewBox="0 0 880 600">
+      <defs>
+        <style>
+          .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+          .mono { font-family: ui-monospace, "JetBrains Mono", Consolas, Menlo, monospace; }
+        </style>
+        <pattern id="hatch-red" width="12" height="12" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#b8503c" stroke-width="2" opacity="0.22"/>
+        </pattern>
+        <pattern id="hatch-gray" width="12" height="12" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#94a8b3" stroke-width="2" opacity="0.24"/>
+        </pattern>
+        <clipPath id="clip-obj">
+          <rect id="clip-obj-r" x="558" y="216" width="0" height="128"/>
+        </clipPath>
+        <clipPath id="clip-data">
+          <rect id="clip-data-r" x="558" y="216" width="0" height="128"/>
+        </clipPath>
+        <clipPath id="clip-rce">
+          <rect id="clip-rce-r" x="558" y="216" width="0" height="128"/>
+        </clipPath>
+      </defs>
+
+      <!-- Slide-matching background + outer card -->
+      <rect width="880" height="600" fill="#f4f7f8"/>
+      <rect x="8" y="8" width="864" height="584" rx="16" fill="#ffffff" stroke="#d2dde2" stroke-width="1.6"/>
+
+      <!-- Header -->
+      <text id="hdr-title" x="34" y="48" class="sans" font-size="18.5" font-weight="800" fill="#1c3546">Механика Use-After-Free между запросами</text>
+      <rect id="hdr-mode-bg" x="598" y="24" width="122" height="32" rx="16" fill="#f9eae7" stroke="#b8503c" stroke-width="1.3"/>
+      <text id="hdr-mode-txt" x="659" y="45" text-anchor="middle" class="sans" font-size="12" font-weight="800" fill="#b8503c">УЯЗВИМОСТЬ</text>
+      <rect id="step-bg" x="728" y="24" width="118" height="32" rx="16" fill="#e1efef" stroke="#2e7d78" stroke-width="1.4"/>
+      <text id="step-txt" x="787" y="45" text-anchor="middle" class="mono" font-size="13.5" font-weight="800" fill="#2e7d78">ШАГ 1 / 4</text>
+
+      <!-- TOP EVENT BANNER (wide 304px box matching Right Card width so nothing overflows) -->
+      <g id="top-banner" opacity="0">
+        <rect id="tb-bg" x="542" y="68" width="304" height="34" rx="17" fill="#2e7d78" stroke="#1d5f5b" stroke-width="1.5"/>
+        <text id="tb-txt" x="694" y="90" text-anchor="middle" class="sans" font-size="13" font-weight="800" fill="#ffffff">↓ HTTP Запрос #1 (upload_progress)</text>
+        <line id="tb-line" x1="694" y1="102" x2="694" y2="118" stroke="#2e7d78" stroke-width="2.6"/>
+        <polygon id="tb-tri" points="688,113 694,122 700,113" fill="#2e7d78"/>
+      </g>
+
+      <!-- LEFT CARD: PHP WORKER PROCESS -->
+      <rect id="proc-card" x="34" y="124" width="304" height="328" rx="14" fill="#f4f7f8" stroke="#c3d2d9" stroke-width="1.8"/>
+      <rect id="proc-pill" x="52" y="142" width="218" height="28" rx="14" fill="#e1efef" stroke="#2e7d78" stroke-width="1.2"/>
+      <circle id="proc-pulse" cx="69" cy="156" r="7" fill="#2e7d78" opacity="0.25"/>
+      <circle id="proc-dot" cx="69" cy="156" r="4" fill="#2e7d78"/>
+      <text id="proc-pill-txt" x="82" y="160.5" class="sans" font-size="12.5" font-weight="700" fill="#1d5f5b">Живёт много запросов</text>
+
+      <text x="52" y="202" class="sans" font-size="21" font-weight="800" fill="#1c3546">ПРОЦЕСС PHP</text>
+
+      <rect id="ptr-box" x="52" y="220" width="268" height="122" rx="12" fill="#ffffff" stroke="#94a8b3" stroke-width="2.2"/>
+      <text x="186" y="246" text-anchor="middle" class="mono" font-size="13" font-weight="700" fill="#5c6f7b">global_ptr (сессия)</text>
+      <text id="ptr-val" x="186" y="305" text-anchor="middle" class="mono" font-size="40" font-weight="800" fill="#6e808c">NULL</text>
+      <circle id="pin-l" cx="320" cy="281" r="5.5" fill="#2e7d78" opacity="0"/>
+
+      <text id="proc-st1" x="186" y="383" text-anchor="middle" class="sans" font-size="15" font-weight="800" fill="#5c6f7b">Ожидание запроса</text>
+      <text id="proc-st2" x="186" y="406" text-anchor="middle" class="sans" font-size="13" fill="#5c6f7b">глобальное состояние воркера</text>
+
+      <!-- RIGHT CARD: REQUEST MEMORY -->
+      <rect id="req-card" x="542" y="124" width="304" height="328" rx="14" fill="#f4f7f8" stroke="#c3d2d9" stroke-width="1.8"/>
+      <rect id="req-pill" x="560" y="142" width="268" height="28" rx="14" fill="#e1efef" stroke="#2e7d78" stroke-width="1.2"/>
+      <text id="req-pill-txt" x="694" y="160.5" text-anchor="middle" class="sans" font-size="12.5" font-weight="700" fill="#1d5f5b">Запрос #1 (временная память)</text>
+
+      <text x="560" y="202" class="sans" font-size="21" font-weight="800" fill="#1c3546">ПАМЯТЬ ЗАПРОСА</text>
+
+      <!-- LAYER 0: BASE EMPTY / FREED SLOT -->
+      <g id="layer-freed">
+        <rect id="freed-bg" x="560" y="220" width="268" height="122" rx="12" fill="#ffffff" stroke="#94a8b3" stroke-width="2" stroke-dasharray="7 5"/>
+        <rect id="freed-hatch" x="561" y="221" width="266" height="120" rx="11" fill="url(#hatch-gray)"/>
+        <rect id="freed-addr" x="572" y="230" width="74" height="24" rx="6" fill="#5c6f7b"/>
+        <text x="609" y="246.5" text-anchor="middle" class="mono" font-size="12.5" font-weight="700" fill="#ffffff">0x7F40</text>
+        <rect id="freed-tag-bg" x="724" y="230" width="92" height="24" rx="6" fill="#e9eff2"/>
+        <text id="freed-tag-txt" x="770" y="246.5" text-anchor="middle" class="mono" font-size="11.5" font-weight="800" fill="#5c6f7b">FREED</text>
+        <text id="freed-main" x="694" y="292" text-anchor="middle" class="sans" font-size="19" font-weight="800" fill="#5c6f7b">СВОБОДНО</text>
+        <text id="freed-sub" x="694" y="320" text-anchor="middle" class="mono" font-size="13" font-weight="700" fill="#6e808c">слот возвращён в кучу</text>
+      </g>
+
+      <!-- LAYER 1: ALLOCATED PHP OBJECT -->
+      <g id="layer-obj" clip-path="url(#clip-obj)">
+        <rect id="obj-bg" x="560" y="220" width="268" height="122" rx="12" fill="#ffffff" stroke="#2e7d78" stroke-width="2.2"/>
+        <rect id="obj-addr" x="572" y="230" width="74" height="24" rx="6" fill="#1c3546"/>
+        <text x="609" y="246.5" text-anchor="middle" class="mono" font-size="12.5" font-weight="700" fill="#ffffff">0x7F40</text>
+        <rect id="obj-tag-bg" x="724" y="230" width="92" height="24" rx="6" fill="#e1efef"/>
+        <text id="obj-tag-txt" x="770" y="246.5" text-anchor="middle" class="mono" font-size="11.5" font-weight="800" fill="#2e7d78">ОБЪЕКТ</text>
+        <text id="obj-main" x="694" y="292" text-anchor="middle" class="sans" font-size="19" font-weight="800" fill="#1c3546">HashTable PHP</text>
+        <text id="obj-sub" x="694" y="320" text-anchor="middle" class="mono" font-size="13.5" font-weight="700" fill="#2e7d78">pDestructor → cleanup</text>
+      </g>
+
+      <!-- LAYER 2: RECLAIMED REQUEST #2 BYTES -->
+      <g id="layer-data" clip-path="url(#clip-data)">
+        <rect id="data-bg" x="560" y="220" width="268" height="122" rx="12" fill="#f9eae7" stroke="#b8503c" stroke-width="2.2"/>
+        <rect id="data-addr" x="572" y="230" width="74" height="24" rx="6" fill="#b8503c"/>
+        <text x="609" y="246.5" text-anchor="middle" class="mono" font-size="12.5" font-weight="700" fill="#ffffff">0x7F40</text>
+        <rect id="data-tag-bg" x="724" y="230" width="92" height="24" rx="6" fill="#b8503c"/>
+        <text id="data-tag-txt" x="770" y="246.5" text-anchor="middle" class="mono" font-size="11.5" font-weight="800" fill="#ffffff">БАЙТЫ #2</text>
+        <text id="data-main" x="694" y="292" text-anchor="middle" class="sans" font-size="19" font-weight="800" fill="#1c3546">Строка Запроса #2</text>
+        <text id="data-sub" x="694" y="320" text-anchor="middle" class="mono" font-size="13.5" font-weight="700" fill="#b8503c">+0x20: байты → system</text>
+      </g>
+
+      <!-- LAYER 3: TYPE CONFUSION / RCE -->
+      <g id="layer-rce" clip-path="url(#clip-rce)">
+        <rect x="560" y="220" width="268" height="122" rx="12" fill="#f9eae7" stroke="#b8503c" stroke-width="2.6"/>
+        <rect x="572" y="230" width="74" height="24" rx="6" fill="#1c3546"/>
+        <text x="609" y="246.5" text-anchor="middle" class="mono" font-size="12.5" font-weight="700" fill="#ffffff">0x7F40</text>
+        <rect x="724" y="230" width="92" height="24" rx="6" fill="#b8503c"/>
+        <text x="770" y="246.5" text-anchor="middle" class="mono" font-size="11.5" font-weight="800" fill="#ffffff">RCE!</text>
+        <text x="694" y="292" text-anchor="middle" class="sans" font-size="18.5" font-weight="800" fill="#b8503c">Читается как HashTable!</text>
+        <text x="694" y="320" text-anchor="middle" class="mono" font-size="13.5" font-weight="800" fill="#1c3546">CALL [+0x20] → system()</text>
+      </g>
+
+      <!-- ANIMATED WIPER SCAN LINE -->
+      <g id="wiper" opacity="0">
+        <rect id="wiper-bar" x="-2" y="218" width="4" height="126" rx="2" fill="#2e7d78"/>
+        <rect id="wiper-pill" x="-36" y="201" width="72" height="20" rx="10" fill="#2e7d78"/>
+        <text id="wiper-txt" x="0" y="214.5" text-anchor="middle" class="mono" font-size="10.5" font-weight="800" fill="#ffffff">alloc()</text>
+      </g>
+
+      <circle id="pin-r" cx="560" cy="281" r="5.5" fill="#2e7d78" opacity="0"/>
+
+      <!-- Bottom event callout inside Right Card -->
+      <rect id="evt-bg" x="560" y="364" width="268" height="68" rx="10" fill="#ffffff" stroke="#d2dde2" stroke-width="1.4"/>
+      <text id="evt-1" x="694" y="393" text-anchor="middle" class="sans" font-size="13.5" font-weight="800" fill="#1c3546">upload_progress</text>
+      <text id="evt-2" x="694" y="415" text-anchor="middle" class="sans" font-size="12.5" fill="#5c6f7b">выделено до кода скрипта</text>
+
+      <!-- CENTER POINTER ARROW -->
+      <line id="arrow" x1="320" y1="281" x2="546" y2="281" stroke="#2e7d78" stroke-width="4" stroke-linecap="round"/>
+      <line id="arrow-flow" x1="320" y1="281" x2="546" y2="281" stroke="#ffffff" stroke-width="3" stroke-dasharray="10 14" stroke-linecap="round" opacity="0"/>
+      <polygon id="arrowhead" points="541,271 559,281 541,291" fill="#2e7d78"/>
+      <circle id="orb" cx="320" cy="281" r="8" fill="#b8503c" opacity="0"/>
+
+      <g id="pill-g">
+        <rect id="pill-bg" x="354" y="227" width="172" height="30" rx="15" fill="#e1efef" stroke="#2e7d78" stroke-width="1.5"/>
+        <text id="pill-txt" x="440" y="246.5" text-anchor="middle" class="sans" font-size="13" font-weight="800" fill="#1d5f5b">указывает</text>
+      </g>
+      <text id="arrow-sub" x="440" y="315" text-anchor="middle" class="sans" font-size="13" font-weight="700" fill="#5c6f7b">разные времена жизни</text>
+
+      <!-- Patched NULL Shield -->
+      <g id="patch-shield" opacity="0">
+        <rect x="368" y="262" width="144" height="38" rx="19" fill="#e1efef" stroke="#2e7d78" stroke-width="2"/>
+        <text x="440" y="286" text-anchor="middle" class="mono" font-size="14" font-weight="800" fill="#1d5f5b">✓ ptr = NULL</text>
+      </g>
+
+      <!-- BOTTOM TIMELINE & EXPLANATION -->
+      <rect x="34" y="472" width="812" height="98" rx="12" fill="#f4f7f8" stroke="#d2dde2" stroke-width="1.4"/>
+      <g id="bars">
+        <rect class="seg" data-step="0" x="52" y="486" width="185" height="6" rx="3" fill="#d2dde2" style="cursor:pointer"/>
+        <rect id="pf-0" x="52" y="486" width="0" height="6" rx="3" fill="#2e7d78" pointer-events="none"/>
+        <rect class="seg" data-step="1" x="249" y="486" width="185" height="6" rx="3" fill="#d2dde2" style="cursor:pointer"/>
+        <rect id="pf-1" x="249" y="486" width="0" height="6" rx="3" fill="#c47d1d" pointer-events="none"/>
+        <rect class="seg" data-step="2" x="446" y="486" width="185" height="6" rx="3" fill="#d2dde2" style="cursor:pointer"/>
+        <rect id="pf-2" x="446" y="486" width="0" height="6" rx="3" fill="#b8503c" pointer-events="none"/>
+        <rect class="seg" data-step="3" x="643" y="486" width="185" height="6" rx="3" fill="#d2dde2" style="cursor:pointer"/>
+        <rect id="pf-3" x="643" y="486" width="0" height="6" rx="3" fill="#b8503c" pointer-events="none"/>
+      </g>
+      <text id="cap1" x="440" y="523" text-anchor="middle" class="sans" font-size="16" font-weight="800" fill="#1c3546">1. Глобальный указатель процесса ссылается на память Запроса #1</text>
+      <text id="cap2" x="440" y="548" text-anchor="middle" class="sans" font-size="13.5" fill="#4b5e6b">Во время upload_progress ссылка сохраняется в состоянии долгоживущего воркера</text>
+    </svg>
+  </div>
+
+  <div class="panel">
+    <div class="scrub-row">
+      <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Таймлайн анимации" />
+      <span id="time-lbl" class="time-lbl">0.0 / 24.0 с</span>
+    </div>
+    <div class="controls">
+      <div class="grp">
+        <button id="btn-vuln" class="active-vuln">Атака (UAF)</button>
+        <button id="btn-patch">Патч PHP</button>
+      </div>
+      <div class="grp">
+        <button id="btn-play">⏸ Пауза</button>
+        <button class="step-btn active" data-step="0">1</button>
+        <button class="step-btn" data-step="1">2</button>
+        <button class="step-btn" data-step="2">3</button>
+        <button class="step-btn" data-step="3">4</button>
+        <button id="btn-speed">0.7×</button>
+      </div>
+      <div class="grp">
+        <button id="btn-gif" class="gif-btn">⬇ GIF (25 FPS)</button>
+        <button id="btn-png">⬇ PNG</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="keys">Клавиши: Пробел - пауза · 1-4 - переход к шагу · M - Атака / Патч</div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+  const easeOut = (t) => 1 - Math.pow(1 - clamp(t), 3);
+  const easeInOut = (t) => {
+    t = clamp(t);
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  };
+
+  // Base timeline (16.8s at 1.0x -> 24.0s at default 0.7x!)
+  const DURS = [4.0, 4.4, 4.0, 4.4];
+  const TOTAL = DURS.reduce((a, b) => a + b, 0);
+
+  const CAPS = {
+    vuln: [
+      {
+        t1: '1. Глобальный указатель процесса ссылается на память Запроса #1',
+        t2: 'Во время upload_progress ссылка сохраняется в состоянии долгоживущего воркера',
+        col: '#2e7d78'
+      },
+      {
+        t1: '2. Сбой (bailout) освобождает память, но указатель остаётся',
+        t2: 'Очистка ссылки пропущена - указатель 0x7F40 стал висячим (Use-After-Free)',
+        col: '#c47d1d'
+      },
+      {
+        t1: '3. Запрос #2 в том же воркере занимает освобождённый адрес 0x7F40',
+        t2: 'Аллокатор повторно выдаёт тот же слот под обычные байты нового HTTP-запроса',
+        col: '#b8503c'
+      },
+      {
+        t1: '4. Обращение по старой ссылке читает данные запроса как структуру',
+        t2: 'Перед перезаписью вызывается деструктор по 0x7F40 -> выполнение кода (RCE)',
+        col: '#b8503c'
+      }
+    ],
+    patch: [
+      {
+        t1: '1. Глобальный указатель процесса ссылается на память Запроса #1',
+        t2: 'Во время upload_progress ссылка сохраняется в состоянии долгоживущего воркера',
+        col: '#2e7d78'
+      },
+      {
+        t1: '2. В исправленном PHP указатель гарантированно сбрасывается в NULL',
+        t2: 'Даже при сбое (bailout) ссылка обнуляется до освобождения кучи запроса',
+        col: '#2e7d78'
+      },
+      {
+        t1: '3. Запрос #2 занимает адрес 0x7F40, но связи с процессом уже нет',
+        t2: 'Байты нового запроса остаются изолированными - global_ptr равен NULL',
+        col: '#2e7d78'
+      },
+      {
+        t1: '4. Безопасная работа: UAF исключён на границе жизненного цикла',
+        t2: 'При сбое очистки RSHUTDOWN патч завершает воркер (fail-closed через ОС)',
+        col: '#2e7d78'
+      }
+    ]
+  };
+
+  function setTopBanner(alpha, yOff, fill, stroke, text, textFill = '#ffffff') {
+    $('top-banner').setAttribute('opacity', clamp(alpha).toFixed(2));
+    $('top-banner').setAttribute('transform', `translate(0, ${yOff.toFixed(1)})`);
+    $('tb-bg').setAttribute('fill', fill);
+    $('tb-bg').setAttribute('stroke', stroke);
+    $('tb-txt').setAttribute('fill', textFill);
+    $('tb-txt').textContent = text;
+    $('tb-line').setAttribute('stroke', stroke);
+    $('tb-tri').setAttribute('fill', stroke);
+  }
+
+  function setWiper(show, xPos, color, label) {
+    $('wiper').setAttribute('opacity', show ? '1' : '0');
+    if (show) {
+      $('wiper').setAttribute('transform', `translate(${xPos.toFixed(1)}, 0)`);
+      $('wiper-bar').setAttribute('fill', color);
+      $('wiper-pill').setAttribute('fill', color);
+      $('wiper-txt').textContent = label;
+    }
+  }
+
+  function render(mode, step, t, elapsed) {
+    const isPatch = mode === 'patch';
+    const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4.5);
+    const isRCE = !isPatch && step === 3 && t > 0.35;
+
+    // Header mode pill
+    $('hdr-title').textContent = isPatch
+      ? 'Исправленный жизненный цикл PHP (патч)'
+      : 'Механика Use-After-Free между запросами';
+    $('hdr-mode-bg').setAttribute('fill', isPatch ? '#e1efef' : '#f9eae7');
+    $('hdr-mode-bg').setAttribute('stroke', isPatch ? '#2e7d78' : '#b8503c');
+    $('hdr-mode-txt').setAttribute('fill', isPatch ? '#1d5f5b' : '#b8503c');
+    $('hdr-mode-txt').textContent = isPatch ? 'ПАТЧ PHP' : 'УЯЗВИМОСТЬ';
+
+    // Step pill
+    const badgeBg = (step === 0 || isPatch) ? '#e1efef' : (step === 1 ? '#fdf3e3' : '#f9eae7');
+    const badgeCol = (step === 0 || isPatch) ? '#2e7d78' : (step === 1 ? '#b26b14' : '#b8503c');
+    $('step-bg').setAttribute('fill', badgeBg);
+    $('step-bg').setAttribute('stroke', badgeCol);
+    $('step-txt').setAttribute('fill', badgeCol);
+    $('step-txt').textContent = `ШАГ ${step + 1} / 4`;
+
+    // Progress bars & caption
+    $('cap1').textContent = CAPS[mode][step].t1;
+    $('cap2').textContent = CAPS[mode][step].t2;
+    for (let i = 0; i < 4; i++) {
+      const f = $(`pf-${i}`);
+      f.setAttribute('fill', CAPS[mode][i].col);
+      f.setAttribute('width', i < step ? '185' : i === step ? (185 * clamp(t)).toFixed(1) : '0');
+    }
+
+    // Worker process heartbeat
+    $('proc-dot').setAttribute('fill', isRCE ? '#b8503c' : '#2e7d78');
+    $('proc-pulse').setAttribute('fill', isRCE ? '#b8503c' : '#2e7d78');
+    $('proc-pulse').setAttribute('r', (5 + pulse * 4).toFixed(1));
+    $('proc-pulse').setAttribute('opacity', (0.35 - pulse * 0.25).toFixed(2));
+    $('proc-pill').setAttribute('fill', isRCE ? '#f9eae7' : '#e1efef');
+    $('proc-pill').setAttribute('stroke', isRCE ? '#b8503c' : '#2e7d78');
+    $('proc-pill-txt').setAttribute('fill', isRCE ? '#b8503c' : '#1d5f5b');
+    $('proc-pill-txt').textContent = isRCE ? 'Процесс захвачен (RCE)' : 'Живёт много запросов';
+    $('proc-card').setAttribute('stroke', isRCE ? '#b8503c' : '#c3d2d9');
+
+    // Reset layers & transients
+    $('clip-obj-r').setAttribute('x', '558'); $('clip-obj-r').setAttribute('width', '0');
+    $('clip-data-r').setAttribute('x', '558'); $('clip-data-r').setAttribute('width', '0');
+    $('clip-rce-r').setAttribute('x', '558'); $('clip-rce-r').setAttribute('width', '0');
+    setWiper(false, 560, '#2e7d78', '');
+    $('arrow-flow').setAttribute('opacity', '0');
+    $('orb').setAttribute('opacity', '0');
+    $('patch-shield').setAttribute('opacity', '0');
+
+    // Reset data layer colors to default attacker crimson
+    $('data-bg').setAttribute('fill', '#f9eae7');
+    $('data-bg').setAttribute('stroke', '#b8503c');
+    $('data-addr').setAttribute('fill', '#b8503c');
+    $('data-tag-bg').setAttribute('fill', '#b8503c');
+    $('data-tag-txt').setAttribute('fill', '#ffffff');
+    $('data-tag-txt').textContent = 'БАЙТЫ #2';
+    $('data-main').setAttribute('fill', '#1c3546');
+    $('data-main').textContent = 'Строка Запроса #2';
+    $('data-sub').setAttribute('fill', '#b8503c');
+    $('data-sub').textContent = '+0x20: байты → system';
+
+    // -----------------------------------------------------------------------
+    // STEP 0: Request #1 arrives -> alloc() wipes in Object -> Arrow draws
+    // -----------------------------------------------------------------------
+    if (step === 0) {
+      let bA = 0, bY = 0;
+      if (t < 0.14) { const u = easeOut(t / 0.14); bA = u; bY = -14 * (1 - u); }
+      else if (t < 0.54) { bA = 1; bY = 0; }
+      else if (t < 0.66) { const u = (t - 0.54) / 0.12; bA = 1 - u; bY = u * 8; }
+      setTopBanner(bA, bY, '#2e7d78', '#1d5f5b', '↓ HTTP Запрос #1 (upload_progress)');
+
+      $('freed-bg').setAttribute('stroke', '#b9c7ce');
+      $('freed-hatch').setAttribute('fill', 'url(#hatch-gray)');
+      $('freed-addr').setAttribute('fill', '#6e808c');
+      $('freed-tag-bg').setAttribute('fill', '#e9eff2');
+      $('freed-tag-txt').setAttribute('fill', '#6e808c');
+      $('freed-tag-txt').textContent = 'ПУСТО';
+      $('freed-main').setAttribute('fill', '#6e808c');
+      $('freed-main').textContent = 'Свободный слот';
+      $('freed-sub').textContent = 'память ещё не выделена';
+
+      const allocP = easeInOut((t - 0.18) / 0.30);
+      $('obj-bg').setAttribute('fill', '#ffffff');
+      $('obj-bg').setAttribute('stroke', '#2e7d78');
+      $('obj-addr').setAttribute('fill', '#1c3546');
+      $('obj-tag-bg').setAttribute('fill', '#e1efef');
+      $('obj-tag-txt').setAttribute('fill', '#2e7d78');
+      $('obj-tag-txt').textContent = 'ОБЪЕКТ';
+      $('obj-sub').setAttribute('fill', '#2e7d78');
+      $('obj-sub').textContent = 'pDestructor → cleanup';
+
+      $('clip-obj-r').setAttribute('x', '558');
+      $('clip-obj-r').setAttribute('width', (272 * allocP).toFixed(1));
+      if (t >= 0.18 && t <= 0.49) setWiper(true, 560 + 268 * allocP, '#2e7d78', 'alloc()');
+
+      const ptrSet = t >= 0.46;
+      $('ptr-box').setAttribute('stroke', ptrSet ? '#2e7d78' : '#b9c7ce');
+      $('ptr-val').setAttribute('fill', ptrSet ? '#1c3546' : '#94a8b3');
+      $('ptr-val').textContent = ptrSet ? '0x7F40' : 'NULL';
+      $('pin-l').setAttribute('fill', '#2e7d78');
+      $('pin-l').setAttribute('opacity', ptrSet ? '1' : '0');
+      $('proc-st1').setAttribute('fill', ptrSet ? '#2e7d78' : '#6e808c');
+      $('proc-st1').textContent = ptrSet ? 'Валидная ссылка' : 'Ожидание запроса...';
+      $('proc-st2').textContent = 'глобальное состояние воркера';
+
+      const draw = easeOut((t - 0.48) / 0.26);
+      $('arrow').setAttribute('stroke', '#2e7d78');
+      $('arrow').setAttribute('stroke-dasharray', '240');
+      $('arrow').setAttribute('stroke-dashoffset', (240 * (1 - draw)).toFixed(1));
+      $('arrow').setAttribute('opacity', draw > 0.02 ? '1' : '0');
+      $('arrowhead').setAttribute('fill', '#2e7d78');
+      $('arrowhead').setAttribute('opacity', draw > 0.88 ? '1' : '0');
+      $('pin-r').setAttribute('fill', '#2e7d78');
+      $('pin-r').setAttribute('opacity', draw > 0.88 ? '1' : '0');
+
+      $('pill-g').setAttribute('opacity', draw > 0.5 ? '1' : '0');
+      $('pill-bg').setAttribute('fill', '#e1efef');
+      $('pill-bg').setAttribute('stroke', '#2e7d78');
+      $('pill-txt').setAttribute('fill', '#1d5f5b');
+      $('pill-txt').textContent = 'указывает';
+      $('arrow-sub').setAttribute('fill', '#5c6f7b');
+      $('arrow-sub').textContent = ptrSet ? 'разные времена жизни' : '';
+
+      $('req-card').setAttribute('stroke', '#99c9c6');
+      $('req-pill').setAttribute('fill', '#e1efef');
+      $('req-pill').setAttribute('stroke', '#2e7d78');
+      $('req-pill-txt').setAttribute('fill', '#1d5f5b');
+      $('req-pill-txt').textContent = 'Запрос #1 (временная память)';
+
+      $('evt-bg').setAttribute('fill', '#ffffff');
+      $('evt-bg').setAttribute('stroke', '#d2dde2');
+      $('evt-1').setAttribute('fill', '#1c3546');
+      $('evt-1').textContent = 'upload_progress';
+      $('evt-2').setAttribute('fill', '#5c6f7b');
+      $('evt-2').textContent = 'выделено до кода скрипта';
+    }
+
+    // -----------------------------------------------------------------------
+    // STEP 1: Bailout -> Smooth free() wipe -> Dangling Ptr (or Patch NULL!)
+    // -----------------------------------------------------------------------
+    else if (step === 1) {
+      const bIn = easeOut(t / 0.14);
+      const bShake = (t > 0.06 && t < 0.26) ? Math.sin(t * 55) * 3 * (1 - (t - 0.06) / 0.20) : 0;
+      setTopBanner(bIn, -10 * (1 - bIn), '#fdf3e3', '#c47d1d', '⚡ Ошибка OOM: zend_bailout()', '#8a520c');
+      if (bShake !== 0) $('top-banner').setAttribute('transform', `translate(${bShake.toFixed(1)}, 0)`);
+
+      $('freed-bg').setAttribute('stroke', isPatch ? '#94a8b3' : '#b8503c');
+      $('freed-hatch').setAttribute('fill', isPatch ? 'url(#hatch-gray)' : 'url(#hatch-red)');
+      $('freed-addr').setAttribute('fill', '#5c6f7b');
+      $('freed-tag-bg').setAttribute('fill', isPatch ? '#e9eff2' : '#f9eae7');
+      $('freed-tag-txt').setAttribute('fill', isPatch ? '#5c6f7b' : '#b8503c');
+      $('freed-tag-txt').textContent = 'FREED';
+      $('freed-main').setAttribute('fill', '#5c6f7b');
+      $('freed-main').textContent = 'СВОБОДНО';
+      $('freed-sub').textContent = 'слот возвращён в кучу';
+
+      $('obj-bg').setAttribute('fill', '#fdf3e3');
+      $('obj-bg').setAttribute('stroke', '#c47d1d');
+      $('obj-addr').setAttribute('fill', '#b26b14');
+      $('obj-tag-bg').setAttribute('fill', '#f9e3be');
+      $('obj-tag-txt').setAttribute('fill', '#8a520c');
+      $('obj-tag-txt').textContent = 'BAILOUT!';
+      $('obj-sub').setAttribute('fill', '#b26b14');
+      $('obj-sub').textContent = isPatch ? 'вызов сброса перед free()' : 'сброс ссылки пропущен!';
+
+      const freeP = easeInOut((t - 0.34) / 0.30);
+      const remainW = 272 * (1 - freeP);
+      $('clip-obj-r').setAttribute('x', (558 + 272 * freeP).toFixed(1));
+      $('clip-obj-r').setAttribute('width', Math.max(0, remainW).toFixed(1));
+      if (t >= 0.34 && t <= 0.65) {
+        setWiper(true, 560 + 268 * freeP, isPatch ? '#2e7d78' : '#b8503c', 'free()');
+      }
+
+      const freedMid = freeP > 0.35;
+
+      if (!isPatch) {
+        $('ptr-box').setAttribute('stroke', freedMid ? '#b8503c' : '#c47d1d');
+        $('ptr-val').setAttribute('fill', freedMid ? '#b8503c' : '#b26b14');
+        $('ptr-val').textContent = '0x7F40';
+        $('pin-l').setAttribute('fill', freedMid ? '#b8503c' : '#c47d1d');
+        $('pin-l').setAttribute('opacity', '1');
+        $('pin-r').setAttribute('fill', freedMid ? '#b8503c' : '#c47d1d');
+        $('pin-r').setAttribute('opacity', '1');
+        $('proc-st1').setAttribute('fill', freedMid ? '#b8503c' : '#b26b14');
+        $('proc-st1').textContent = freedMid ? '⚠ Указатель НЕ сброшен!' : '⚡ Очистка пропущена!';
+        $('proc-st2').textContent = 'процесс продолжает работу';
+
+        $('req-card').setAttribute('stroke', freedMid ? '#df9e92' : '#d89b3c');
+        $('req-pill').setAttribute('fill', freedMid ? '#e9eff2' : '#fdf3e3');
+        $('req-pill').setAttribute('stroke', freedMid ? '#94a8b3' : '#c47d1d');
+        $('req-pill-txt').setAttribute('fill', freedMid ? '#4b5e6b' : '#8a520c');
+        $('req-pill-txt').textContent = freedMid ? 'Запрос #1 завершён (free)' : 'Запрос #1: аварийный выход';
+
+        $('evt-bg').setAttribute('fill', freedMid ? '#f9eae7' : '#fdf3e3');
+        $('evt-bg').setAttribute('stroke', freedMid ? '#df9e92' : '#d89b3c');
+        $('evt-1').setAttribute('fill', freedMid ? '#b8503c' : '#8a520c');
+        $('evt-1').textContent = freedMid ? 'Память освобождена' : '⚡ Прерывание (longjmp)';
+        $('evt-2').setAttribute('fill', freedMid ? '#7a453b' : '#7c5a2b');
+        $('evt-2').textContent = freedMid ? 'но ссылка 0x7F40 осталась' : 'пропущен сброс ptr = NULL';
+
+        $('arrow').setAttribute('stroke', freedMid ? '#b8503c' : '#c47d1d');
+        $('arrow').setAttribute('stroke-dasharray', freedMid ? '9 7' : '');
+        $('arrow').setAttribute('stroke-dashoffset', freedMid ? (-elapsed * 34).toFixed(1) : '0');
+        $('arrow').setAttribute('opacity', freedMid ? (0.72 + pulse * 0.28).toFixed(2) : '1');
+        $('arrowhead').setAttribute('fill', freedMid ? '#b8503c' : '#c47d1d');
+        $('arrowhead').setAttribute('opacity', '1');
+
+        $('pill-g').setAttribute('opacity', '1');
+        $('pill-bg').setAttribute('fill', freedMid ? '#f9eae7' : '#fdf3e3');
+        $('pill-bg').setAttribute('stroke', freedMid ? '#b8503c' : '#c47d1d');
+        $('pill-txt').setAttribute('fill', freedMid ? '#b8503c' : '#8a520c');
+        $('pill-txt').textContent = freedMid ? 'ВИСЯЧИЙ (UAF!)' : 'НЕ СБРОШЕН!';
+        $('arrow-sub').setAttribute('fill', freedMid ? '#b8503c' : '#b26b14');
+        $('arrow-sub').textContent = '✗ ptr = NULL пропущен';
+      } else {
+        // PATCHED: Resets global_ptr = NULL cleanly at t = 0.22 BEFORE free() runs!
+        const resetDone = t >= 0.22;
+        const fade = clamp(1 - (t - 0.16) / 0.20);
+        $('ptr-box').setAttribute('stroke', '#2e7d78');
+        $('ptr-val').setAttribute('fill', resetDone ? '#2e7d78' : '#b26b14');
+        $('ptr-val').textContent = resetDone ? 'NULL' : '0x7F40';
+        $('pin-l').setAttribute('fill', '#2e7d78');
+        $('pin-l').setAttribute('opacity', fade.toFixed(2));
+        $('pin-r').setAttribute('fill', '#2e7d78');
+        $('pin-r').setAttribute('opacity', fade.toFixed(2));
+        $('proc-st1').setAttribute('fill', '#1d5f5b');
+        $('proc-st1').textContent = resetDone ? '✓ Состояние сброшено' : 'Сброс ссылки...';
+        $('proc-st2').textContent = 'гарантия даже при bailout';
+
+        $('req-card').setAttribute('stroke', freedMid ? '#c3d2d9' : '#d89b3c');
+        $('req-pill').setAttribute('fill', freedMid ? '#e9eff2' : '#fdf3e3');
+        $('req-pill').setAttribute('stroke', freedMid ? '#94a8b3' : '#c47d1d');
+        $('req-pill-txt').setAttribute('fill', freedMid ? '#4b5e6b' : '#8a520c');
+        $('req-pill-txt').textContent = freedMid ? 'Запрос #1 завершён (free)' : 'Запрос #1: аварийный выход';
+
+        $('evt-bg').setAttribute('fill', '#e1efef');
+        $('evt-bg').setAttribute('stroke', '#99c9c6');
+        $('evt-1').setAttribute('fill', '#1d5f5b');
+        $('evt-1').textContent = '✓ Очистка выполнена';
+        $('evt-2').setAttribute('fill', '#4b5e6b');
+        $('evt-2').textContent = 'ссылка снята до free()';
+
+        $('arrow').setAttribute('stroke', '#2e7d78');
+        $('arrow').setAttribute('stroke-dasharray', '6 6');
+        $('arrow').setAttribute('opacity', fade.toFixed(2));
+        $('arrowhead').setAttribute('fill', '#2e7d78');
+        $('arrowhead').setAttribute('opacity', fade.toFixed(2));
+        $('pill-g').setAttribute('opacity', '0');
+
+        $('patch-shield').setAttribute('opacity', easeOut((t - 0.20) / 0.20).toFixed(2));
+        $('arrow-sub').setAttribute('fill', '#2e7d78');
+        $('arrow-sub').textContent = 'связь разорвана до free()';
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // STEP 2: Request #2 arrives -> write() wipes in Bytes
+    // -----------------------------------------------------------------------
+    else if (step === 2) {
+      let bA = 0, bY = 0;
+      if (t < 0.14) { const u = easeOut(t / 0.14); bA = u; bY = -14 * (1 - u); }
+      else if (t < 0.56) { bA = 1; bY = 0; }
+      else if (t < 0.68) { const u = (t - 0.56) / 0.12; bA = 1 - u; bY = u * 8; }
+      setTopBanner(bA, bY, '#b8503c', '#8f3626', '↓ HTTP Запрос #2 (POST байты)');
+
+      $('freed-bg').setAttribute('stroke', isPatch ? '#94a8b3' : '#b8503c');
+      $('freed-hatch').setAttribute('fill', isPatch ? 'url(#hatch-gray)' : 'url(#hatch-red)');
+      $('freed-addr').setAttribute('fill', '#5c6f7b');
+      $('freed-tag-bg').setAttribute('fill', isPatch ? '#e9eff2' : '#f9eae7');
+      $('freed-tag-txt').setAttribute('fill', isPatch ? '#5c6f7b' : '#b8503c');
+      $('freed-tag-txt').textContent = 'FREED';
+      $('freed-main').setAttribute('fill', '#5c6f7b');
+      $('freed-main').textContent = 'СВОБОДНО';
+      $('freed-sub').textContent = 'слот возвращён в кучу';
+
+      const fillP = easeInOut((t - 0.28) / 0.32);
+      $('clip-data-r').setAttribute('x', '558');
+      $('clip-data-r').setAttribute('width', (272 * fillP).toFixed(1));
+      if (t >= 0.28 && t <= 0.61) setWiper(true, 560 + 268 * fillP, '#b8503c', 'write()');
+
+      const filled = fillP > 0.4;
+      $('req-card').setAttribute('stroke', isPatch ? '#c3d2d9' : '#b8503c');
+      $('req-pill').setAttribute('fill', '#f9eae7');
+      $('req-pill').setAttribute('stroke', '#b8503c');
+      $('req-pill-txt').setAttribute('fill', '#b8503c');
+      $('req-pill-txt').textContent = 'Запрос #2 (тот же воркер)';
+
+      $('evt-bg').setAttribute('fill', '#f9eae7');
+      $('evt-bg').setAttribute('stroke', '#df9e92');
+      $('evt-1').setAttribute('fill', '#8f3626');
+      $('evt-1').textContent = 'Переиспользование кучи';
+      $('evt-2').setAttribute('fill', '#7a453b');
+      $('evt-2').textContent = 'аллокатор выдал тот же 0x7F40';
+
+      if (!isPatch) {
+        $('ptr-box').setAttribute('stroke', '#b8503c');
+        $('ptr-val').setAttribute('fill', '#b8503c');
+        $('ptr-val').textContent = '0x7F40';
+        $('pin-l').setAttribute('fill', '#b8503c');
+        $('pin-l').setAttribute('opacity', '1');
+        $('pin-r').setAttribute('fill', '#b8503c');
+        $('pin-r').setAttribute('opacity', '1');
+        $('proc-st1').setAttribute('fill', '#b8503c');
+        $('proc-st1').textContent = filled ? '⚠ Ссылается на Запрос #2' : '⚠ Висячий указатель 0x7F40';
+        $('proc-st2').textContent = 'старый адрес совпал с новым';
+
+        $('arrow').setAttribute('stroke', '#b8503c');
+        $('arrow').setAttribute('stroke-dasharray', '9 7');
+        $('arrow').setAttribute('stroke-dashoffset', (-elapsed * 42).toFixed(1));
+        $('arrow').setAttribute('opacity', '1');
+        $('arrowhead').setAttribute('fill', '#b8503c');
+        $('arrowhead').setAttribute('opacity', '1');
+
+        $('pill-g').setAttribute('opacity', '1');
+        $('pill-bg').setAttribute('fill', '#f9eae7');
+        $('pill-bg').setAttribute('stroke', '#b8503c');
+        $('pill-txt').setAttribute('fill', '#b8503c');
+        $('pill-txt').textContent = filled ? 'ЧУЖИЕ ДАННЫЕ!' : 'ВИСЯЧИЙ (UAF!)';
+        $('arrow-sub').setAttribute('fill', '#b8503c');
+        $('arrow-sub').textContent = 'LIFO-аллокатор';
+      } else {
+        $('ptr-box').setAttribute('stroke', '#2e7d78');
+        $('ptr-val').setAttribute('fill', '#2e7d78');
+        $('ptr-val').textContent = 'NULL';
+        $('pin-l').setAttribute('opacity', '0');
+        $('pin-r').setAttribute('opacity', '0');
+        $('proc-st1').setAttribute('fill', '#1d5f5b');
+        $('proc-st1').textContent = '✓ Ссылка пуста (NULL)';
+        $('proc-st2').textContent = 'не указывает на 0x7F40';
+
+        $('arrow').setAttribute('opacity', '0');
+        $('arrowhead').setAttribute('opacity', '0');
+        $('pill-g').setAttribute('opacity', '0');
+        $('patch-shield').setAttribute('opacity', '1');
+        $('arrow-sub').setAttribute('fill', '#2e7d78');
+        $('arrow-sub').textContent = 'связи с 0x7F40 нет';
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // STEP 3: Dereference -> RCE (or Safe Isolation in Patched Mode)
+    // -----------------------------------------------------------------------
+    else if (step === 3) {
+      if (!isPatch) {
+        const bIn = easeOut(t / 0.14);
+        setTopBanner(bIn, -8 * (1 - bIn), '#1c3546', '#b8503c', '⚠ Обращение до сброса (RINIT)', '#ffffff');
+
+        $('clip-data-r').setAttribute('x', '558');
+        $('clip-data-r').setAttribute('width', '272');
+
+        const rceP = easeInOut((t - 0.24) / 0.30);
+        $('clip-rce-r').setAttribute('x', '558');
+        $('clip-rce-r').setAttribute('width', (272 * rceP).toFixed(1));
+        if (t >= 0.24 && t <= 0.55) setWiper(true, 560 + 268 * rceP, '#1c3546', 'read()');
+
+        $('ptr-box').setAttribute('stroke', '#b8503c');
+        $('ptr-val').setAttribute('fill', '#b8503c');
+        $('ptr-val').textContent = '0x7F40';
+        $('pin-l').setAttribute('fill', '#b8503c');
+        $('pin-l').setAttribute('opacity', '1');
+        $('pin-r').setAttribute('fill', '#b8503c');
+        $('pin-r').setAttribute('opacity', '1');
+        $('proc-st1').setAttribute('fill', '#b8503c');
+        $('proc-st1').textContent = 'if (ptr != NULL) dtor(ptr)';
+        $('proc-st2').textContent = 'чтение до нормального сброса';
+
+        $('req-card').setAttribute('stroke', '#b8503c');
+        $('req-pill').setAttribute('fill', '#b8503c');
+        $('req-pill').setAttribute('stroke', '#b8503c');
+        $('req-pill-txt').setAttribute('fill', '#ffffff');
+        $('req-pill-txt').textContent = 'Запрос #2 (до запуска index.php)';
+
+        const rceReady = rceP > 0.5;
+        $('evt-bg').setAttribute('fill', rceReady ? '#b8503c' : '#f9eae7');
+        $('evt-bg').setAttribute('stroke', '#8f3626');
+        $('evt-1').setAttribute('fill', rceReady ? '#ffffff' : '#b8503c');
+        $('evt-1').textContent = rceReady ? '⚡ Перехват управления (RCE)' : 'Чтение байтов как HashTable...';
+        $('evt-2').setAttribute('fill', rceReady ? '#fde3dd' : '#7a453b');
+        $('evt-2').textContent = rceReady ? 'байты запроса выполнены как код' : 'извлечение поля pDestructor (+0x20)';
+
+        $('arrow').setAttribute('stroke', '#b8503c');
+        $('arrow').setAttribute('stroke-dasharray', '');
+        $('arrow').setAttribute('stroke-dashoffset', '0');
+        $('arrow').setAttribute('opacity', '1');
+        $('arrow-flow').setAttribute('opacity', '0.85');
+        $('arrow-flow').setAttribute('stroke', '#fde3dd');
+        $('arrow-flow').setAttribute('stroke-dashoffset', (-elapsed * 64).toFixed(1));
+        $('arrowhead').setAttribute('fill', '#b8503c');
+        $('arrowhead').setAttribute('opacity', '1');
+
+        const orbX = 320 + ((t * 2.2) % 1) * 230;
+        $('orb').setAttribute('cx', orbX.toFixed(1));
+        $('orb').setAttribute('opacity', '1');
+
+        $('pill-g').setAttribute('opacity', '1');
+        $('pill-bg').setAttribute('fill', '#b8503c');
+        $('pill-bg').setAttribute('stroke', '#8f3626');
+        $('pill-txt').setAttribute('fill', '#ffffff');
+        $('pill-txt').textContent = 'ВЫЗОВ DTOR!';
+        $('arrow-sub').setAttribute('fill', '#b8503c');
+        $('arrow-sub').textContent = 'Type Confusion';
+      } else {
+        const bIn = easeOut(t / 0.14);
+        setTopBanner(bIn, -8 * (1 - bIn), '#2e7d78', '#1d5f5b', '✓ Проверка состояния: ptr == NULL', '#ffffff');
+
+        // Data stays safely isolated as ordinary request data
+        $('clip-data-r').setAttribute('x', '558');
+        $('clip-data-r').setAttribute('width', '272');
+        $('data-bg').setAttribute('fill', '#ffffff');
+        $('data-bg').setAttribute('stroke', '#94a8b3');
+        $('data-addr').setAttribute('fill', '#5c6f7b');
+        $('data-tag-bg').setAttribute('fill', '#e1efef');
+        $('data-tag-txt').setAttribute('fill', '#1d5f5b');
+        $('data-tag-txt').textContent = 'ИЗОЛИРОВАН';
+        $('data-main').setAttribute('fill', '#4b5e6b');
+        $('data-main').textContent = 'Обычные данные #2';
+        $('data-sub').setAttribute('fill', '#6e808c');
+        $('data-sub').textContent = 'не читаются как HashTable';
+
+        $('ptr-box').setAttribute('stroke', '#2e7d78');
+        $('ptr-val').setAttribute('fill', '#2e7d78');
+        $('ptr-val').textContent = 'NULL';
+        $('pin-l').setAttribute('opacity', '0');
+        $('pin-r').setAttribute('opacity', '0');
+        $('proc-st1').setAttribute('fill', '#1d5f5b');
+        $('proc-st1').textContent = '✓ UAF невозможен';
+        $('proc-st2').textContent = 'выделяется чистая структура';
+
+        $('req-card').setAttribute('stroke', '#2e7d78');
+        $('req-pill').setAttribute('fill', '#e1efef');
+        $('req-pill').setAttribute('stroke', '#2e7d78');
+        $('req-pill-txt').setAttribute('fill', '#1d5f5b');
+        $('req-pill-txt').textContent = 'Запрос #2 (штатная работа)';
+
+        $('evt-bg').setAttribute('fill', '#2e7d78');
+        $('evt-bg').setAttribute('stroke', '#1d5f5b');
+        $('evt-1').setAttribute('fill', '#ffffff');
+        $('evt-1').textContent = '✓ Атака заблокирована';
+        $('evt-2').setAttribute('fill', '#e1f4f3');
+        $('evt-2').textContent = 'при сбое RSHUTDOWN - выход воркера';
+
+        $('arrow').setAttribute('opacity', '0');
+        $('arrowhead').setAttribute('opacity', '0');
+        $('pill-g').setAttribute('opacity', '0');
+        $('patch-shield').setAttribute('opacity', '1');
+        $('arrow-sub').setAttribute('fill', '#2e7d78');
+        $('arrow-sub').textContent = 'чистая граница запросов';
+      }
+    }
+  }
+
+  // =========================================================================
+  // PLAYBACK ENGINE (Default speed = 0.7x!)
+  // =========================================================================
+  let mode = 'vuln';
+  let playing = true;
+  const speeds = [0.5, 0.7, 1.0, 1.5];
+  let spI = 1; // 0.7x default
+  let speed = speeds[spI];
+  let curTime = 0;
+  let lastTs = null;
+  let exporting = false;
+
+  function getStep(sec) {
+    let acc = 0;
+    for (let i = 0; i < DURS.length; i++) {
+      if (sec < acc + DURS[i] || i === DURS.length - 1) {
+        return { step: i, t: clamp((sec - acc) / DURS[i]) };
+      }
+      acc += DURS[i];
+    }
+    return { step: 0, t: 0 };
+  }
+
+  function syncUI() {
+    const s = getStep(curTime);
+    document.querySelectorAll('.step-btn').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.step) === s.step);
+    });
+    $('scrub').value = Math.round((curTime / TOTAL) * 1000);
+    const effCur = curTime / speed;
+    const effTot = TOTAL / speed;
+    $('time-lbl').textContent = `${effCur.toFixed(1)} / ${effTot.toFixed(1)} с`;
+  }
+
+  function jumpToStep(idx) {
+    let acc = 0;
+    for (let i = 0; i < idx; i++) acc += DURS[i];
+    curTime = acc; // ALWAYS exact start (t = 0) of the step!
+    const s = getStep(curTime);
+    render(mode, s.step, s.t, curTime);
+    syncUI();
+  }
+
+  function setMode(nextMode) {
+    mode = nextMode;
+    $('btn-vuln').classList.toggle('active-vuln', mode === 'vuln');
+    $('btn-patch').classList.toggle('active-patch', mode === 'patch');
+    const s = getStep(curTime);
+    render(mode, s.step, s.t, curTime);
+    syncUI();
+  }
+
+  function tick(ts) {
+    if (lastTs === null) lastTs = ts;
+    const dt = Math.min((ts - lastTs) / 1000, 0.1);
+    lastTs = ts;
+    if (playing && !exporting) {
+      curTime = (curTime + dt * speed) % TOTAL;
+      const s = getStep(curTime);
+      render(mode, s.step, s.t, curTime);
+      syncUI();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // Controls
+  $('btn-vuln').addEventListener('click', () => setMode('vuln'));
+  $('btn-patch').addEventListener('click', () => setMode('patch'));
+  $('btn-play').addEventListener('click', () => {
+    playing = !playing;
+    $('btn-play').textContent = playing ? '⏸ Пауза' : '▶ Старт';
+  });
+  $('btn-speed').addEventListener('click', () => {
+    spI = (spI + 1) % speeds.length;
+    speed = speeds[spI];
+    $('btn-speed').textContent = `${speed.toFixed(1)}×`;
+    syncUI();
+  });
+  document.querySelectorAll('.step-btn, .seg').forEach((el) => {
+    el.addEventListener('click', () => jumpToStep(Number(el.dataset.step)));
+  });
+  $('scrub').addEventListener('input', (e) => {
+    curTime = (Number(e.target.value) / 1000) * (TOTAL - 0.001);
+    const s = getStep(curTime);
+    render(mode, s.step, s.t, curTime);
+    syncUI();
+  });
+
+  // Keyboard shortcuts for presenting live!
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space') { e.preventDefault(); $('btn-play').click(); }
+    else if (e.key >= '1' && e.key <= '4') jumpToStep(Number(e.key) - 1);
+    else if (e.key === 'ArrowRight') jumpToStep((getStep(curTime).step + 1) % 4);
+    else if (e.key === 'ArrowLeft') jumpToStep((getStep(curTime).step + 3) % 4);
+    else if (e.key.toLowerCase() === 'm') setMode(mode === 'vuln' ? 'patch' : 'vuln');
+  });
+
+  // =========================================================================
+  // PNG & HIGH-FPS (25 FPS, 1:1 880x600, Delta-Compressed) GIF89a EXPORTER
+  // =========================================================================
+  function svgToCanvas(svgEl, scale = 1) {
+    return new Promise((res, rej) => {
+      const w = Number(svgEl.getAttribute('width'));
+      const h = Number(svgEl.getAttribute('height'));
+      const xml = new XMLSerializer().serializeToString(svgEl);
+      const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }));
+      const img = new Image();
+      img.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(w * scale);
+        cv.height = Math.round(h * scale);
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.fillStyle = '#f4f7f8';
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        res(cv);
+      };
+      img.onerror = (e) => { URL.revokeObjectURL(url); rej(e); };
+      img.src = url;
+    });
+  }
+
+  function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  $('btn-png').addEventListener('click', async () => {
+    const cv = await svgToCanvas($('svg-uaf'), 2);
+    const s = getStep(curTime);
+    cv.toBlob((b) => downloadBlob(b, `php2shell-${mode}-step${s.step + 1}.png`), 'image/png');
+  });
+
+  // 39 exact light-theme colors + 216 RGB cube = 255 opaque colors (0..254); 255 = transparent!
+  function buildLightPalette255() {
+    const exact = [
+      '#f4f7f8','#ffffff','#e9eff2','#d2dde2','#c3d2d9','#b9c7ce','#94a8b3','#6e808c',
+      '#5c6f7b','#4b5e6b','#1c3546','#132b3a','#2e7d78','#1d5f5b','#99c9c6','#e1efef',
+      '#b8503c','#8f3626','#7a453b','#df9e92','#f9eae7','#fde3dd','#fbe8e4','#f5a394',
+      '#c47d1d','#b26b14','#8a520c','#d89b3c','#f9e3be','#fdf3e3','#7c5a2b','#e3ecee',
+      '#cbd7dd','#2c4454','#9bc2c7','#cbdbe0','#d5f0ee','#e1f4f3','#000000'
+    ]; // 39 entries
+    const pal = new Uint8Array(256 * 3);
+    let idx = 0;
+    for (const h of exact) {
+      const n = parseInt(h.slice(1), 16);
+      pal[idx++] = (n >> 16) & 255;
+      pal[idx++] = (n >> 8) & 255;
+      pal[idx++] = n & 255;
+    }
+    const v = [0, 51, 102, 153, 204, 255];
+    for (const r of v) for (const g of v) for (const b of v) { pal[idx++] = r; pal[idx++] = g; pal[idx++] = b; }
+    // Index 255 left [0,0,0] as Transparent Color Index
+    return pal;
+  }
+
+  function makeMapper255(pal) {
+    const lut = new Uint8Array(32768).fill(255);
+    return (r, g, b) => {
+      const k = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      if (lut[k] !== 255) return lut[k];
+      let best = 0, bestD = 1e9;
+      for (let i = 0; i < 255; i++) {
+        const dr = r - pal[i * 3], dg = g - pal[i * 3 + 1], db = b - pal[i * 3 + 2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = i; if (d === 0) break; }
+      }
+      return (lut[k] = best);
+    };
+  }
+
+  class Writer {
+    constructor() { this.chunks = []; this.buf = new Uint8Array(65536); this.p = 0; }
+    b(v) {
+      if (this.p >= this.buf.length) { this.chunks.push(this.buf); this.buf = new Uint8Array(65536); this.p = 0; }
+      this.buf[this.p++] = v & 255;
+    }
+    arr(a) { for (let i = 0; i < a.length; i++) this.b(a[i]); }
+    u16(v) { this.b(v); this.b(v >> 8); }
+    blob(t) { this.chunks.push(this.buf.subarray(0, this.p)); return new Blob(this.chunks, { type: t }); }
+  }
+
+  function encodeLZW(w, px) {
+    const CLEAR = 256, EOI = 257;
+    const keys = new Int32Array(8192).fill(-1);
+    const vals = new Int16Array(8192);
+    w.b(8);
+    const sub = new Uint8Array(255);
+    let subLen = 0, bitBuf = 0, bitCnt = 0;
+    const flush = () => { if (subLen) { w.b(subLen); for (let i = 0; i < subLen; i++) w.b(sub[i]); subLen = 0; } };
+    const emit = (byte) => { sub[subLen++] = byte; if (subLen === 255) flush(); };
+    const put = (code, size) => {
+      bitBuf |= (code << bitCnt); bitCnt += size;
+      while (bitCnt >= 8) { emit(bitBuf & 255); bitBuf >>>= 8; bitCnt -= 8; }
+    };
+    let codeSize = 9, nextCode = 258;
+    put(CLEAR, codeSize);
+    let prefix = px[0];
+    for (let i = 1; i < px.length; i++) {
+      const k = px[i], key = (prefix << 8) | k;
+      let idx = ((key * 2654435761) >>> 19) & 8191;
+      while (keys[idx] !== -1 && keys[idx] !== key) idx = (idx + 1) & 8191;
+      if (keys[idx] === key) prefix = vals[idx];
+      else {
+        put(prefix, codeSize);
+        if (nextCode < 4096) {
+          keys[idx] = key; vals[idx] = nextCode++;
+          if (nextCode > (1 << codeSize)) codeSize++;
+        } else {
+          put(CLEAR, codeSize); keys.fill(-1); nextCode = 258; codeSize = 9;
+        }
+        prefix = k;
+      }
+    }
+    put(prefix, codeSize); put(EOI, codeSize);
+    if (bitCnt > 0) emit(bitBuf & 255);
+    flush(); w.b(0);
+  }
+
+  $('btn-gif').addEventListener('click', async () => {
+    if (exporting) return;
+    exporting = true;
+    const btn = $('btn-gif');
+    btn.disabled = true;
+    const saved = curTime;
+    try {
+      const W = 880, H = 600; // Full crisp 1:1 native resolution!
+      const DELAY_CS = 4;     // 40 ms/frame = 25 FPS (smoothest exact GIF rate near 24 FPS)
+      const DT_REAL = DELAY_CS / 100;
+      const effTotal = TOTAL / speed;
+      const TOTAL_FRAMES = Math.round(effTotal / DT_REAL);
+
+      const pal = buildLightPalette255();
+      const map = makeMapper255(pal);
+      const w = new Writer();
+
+      // GIF89a Header + Global Color Table + Infinite Loop
+      w.arr([0x47,0x49,0x46,0x38,0x39,0x61]);
+      w.u16(W); w.u16(H);
+      w.arr([0xF7, 0x00, 0x00]);
+      w.arr(pal);
+      w.arr([0x21,0xFF,0x0B, 0x4E,0x45,0x54,0x53,0x43,0x41,0x50,0x45,0x32,0x2E,0x30, 0x03,0x01,0x00,0x00,0x00]);
+
+      const svg = $('svg-uaf');
+      const curPx = new Uint8Array(W * H);
+      const prevPx = new Uint8Array(W * H);
+
+      for (let f = 0; f < TOTAL_FRAMES; f++) {
+        const simSec = (f * DT_REAL * speed) % TOTAL;
+        const s = getStep(simSec);
+        render(mode, s.step, s.t, simSec);
+
+        const cv = await svgToCanvas(svg, 1);
+        const data = cv.getContext('2d').getImageData(0, 0, W, H).data;
+        for (let i = 0, j = 0; i < curPx.length; i++, j += 4) {
+          curPx[i] = map(data[j], data[j + 1], data[j + 2]);
+        }
+
+        if (f === 0) {
+          // Frame 0: Full opaque 880x600 frame (resets canvas cleanly on every loop)
+          w.arr([0x21, 0xF9, 0x04, 0x04]); w.u16(DELAY_CS); w.arr([0x00, 0x00]);
+          w.b(0x2C); w.u16(0); w.u16(0); w.u16(W); w.u16(H); w.b(0x00);
+          encodeLZW(w, curPx);
+        } else {
+          // Delta Bounding Box + Transparent Index 255 for unchanged pixels!
+          let minX = W, minY = H, maxX = -1, maxY = -1;
+          for (let y = 0; y < H; y++) {
+            const row = y * W;
+            for (let x = 0; x < W; x++) {
+              if (curPx[row + x] !== prevPx[row + x]) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+
+          // GCE with Disposal=1 + Transparent Flag (0x05), Transparent Index = 255
+          w.arr([0x21, 0xF9, 0x04, 0x05]); w.u16(DELAY_CS); w.arr([255, 0x00]);
+          if (maxX < minX) {
+            w.b(0x2C); w.u16(0); w.u16(0); w.u16(1); w.u16(1); w.b(0x00);
+            encodeLZW(w, new Uint8Array([255]));
+          } else {
+            const bw = maxX - minX + 1, bh = maxY - minY + 1;
+            const delta = new Uint8Array(bw * bh);
+            for (let dy = 0; dy < bh; dy++) {
+              const srcRow = (minY + dy) * W + minX;
+              const dstRow = dy * bw;
+              for (let dx = 0; dx < bw; dx++) {
+                const c = curPx[srcRow + dx];
+                delta[dstRow + dx] = (c === prevPx[srcRow + dx]) ? 255 : c;
+              }
+            }
+            w.b(0x2C); w.u16(minX); w.u16(minY); w.u16(bw); w.u16(bh); w.b(0x00);
+            encodeLZW(w, delta);
+          }
+        }
+        prevPx.set(curPx);
+
+        if (f % 5 === 0 || f === TOTAL_FRAMES - 1) {
+          btn.textContent = `⏳ ${Math.round(((f + 1) / TOTAL_FRAMES) * 100)}%`;
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+
+      w.b(0x3B);
+      downloadBlob(w.blob('image/gif'), `php2shell-${mode}-25fps.gif`);
+      btn.textContent = '✓ Готово!';
+      setTimeout(() => { btn.textContent = '⬇ GIF (25 FPS)'; }, 2200);
+    } catch (err) {
+      console.error(err);
+      btn.textContent = '⚠ Ошибка';
+      setTimeout(() => { btn.textContent = '⬇ GIF (25 FPS)'; }, 2200);
+    } finally {
+      curTime = saved;
+      const s = getStep(curTime);
+      render(mode, s.step, s.t, curTime);
+      syncUI();
+      exporting = false;
+      btn.disabled = false;
+    }
+  });
+
+  render(mode, 0, 0, 0);
+  syncUI();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
